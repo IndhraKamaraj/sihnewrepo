@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   RotateCcw,
@@ -44,6 +44,15 @@ export const OperationalStressTestingCard: React.FC<OperationalStressTestingCard
       ? `${upcomingSections[0].fromStationCode}-${upcomingSections[0].toStationCode}`
       : '';
   });
+
+  // Reset section key when selected train changes
+  useEffect(() => {
+    if (upcomingSections[0]) {
+      setSelectedSectionKey(`${upcomingSections[0].fromStationCode}-${upcomingSections[0].toStationCode}`);
+    } else {
+      setSelectedSectionKey('');
+    }
+  }, [train.trainNumber]);
 
   // Keep selection valid if sections update
   const effectiveSectionKey =

@@ -44,7 +44,8 @@ class OperationalScenarioServiceImpl {
    * Retrieve all section overrides for a train
    */
   public getScenarioForTrain(trainNumber: string): SectionScenarioOverride[] {
-    const trainMap = this.scenarios.get(trainNumber);
+    const cleanNo = (trainNumber || '').trim();
+    const trainMap = this.scenarios.get(cleanNo);
     if (!trainMap) return [];
     return Array.from(trainMap.values());
   }
@@ -56,7 +57,9 @@ class OperationalScenarioServiceImpl {
     trainNumber: string,
     sectionKey: string
   ): SectionScenarioOverride | undefined {
-    return this.scenarios.get(trainNumber)?.get(sectionKey);
+    const cleanNo = (trainNumber || '').trim();
+    const cleanKey = (sectionKey || '').trim().toUpperCase();
+    return this.scenarios.get(cleanNo)?.get(cleanKey);
   }
 
   /**
@@ -69,21 +72,28 @@ class OperationalScenarioServiceImpl {
     toStationCode: string,
     congestion: CongestionLevel
   ): void {
-    const trainMap = this.getOrCreateTrainMap(trainNumber);
-    const existing = trainMap.get(sectionKey) || {
-      sectionKey,
-      fromStationCode,
-      toStationCode
+    const cleanNo = (trainNumber || '').trim();
+    const cleanKey = (sectionKey || '').trim().toUpperCase();
+    const cleanFrom = (fromStationCode || '').trim().toUpperCase();
+    const cleanTo = (toStationCode || '').trim().toUpperCase();
+
+    const trainMap = this.getOrCreateTrainMap(cleanNo);
+    const existing = trainMap.get(cleanKey) || {
+      sectionKey: cleanKey,
+      fromStationCode: cleanFrom,
+      toStationCode: cleanTo
     };
 
     if (congestion === 'NORMAL' && !existing.speedRestrictionKmph && !existing.unscheduledStopMinutes && !existing.isTrackBlocked) {
-      trainMap.delete(sectionKey);
+      trainMap.delete(cleanKey);
     } else {
       existing.congestion = congestion;
-      trainMap.set(sectionKey, existing);
+      existing.fromStationCode = cleanFrom;
+      existing.toStationCode = cleanTo;
+      trainMap.set(cleanKey, existing);
     }
 
-    this.notify(trainNumber);
+    this.notify(cleanNo);
   }
 
   /**
@@ -96,21 +106,28 @@ class OperationalScenarioServiceImpl {
     toStationCode: string,
     speedKmph?: number
   ): void {
-    const trainMap = this.getOrCreateTrainMap(trainNumber);
-    const existing = trainMap.get(sectionKey) || {
-      sectionKey,
-      fromStationCode,
-      toStationCode
+    const cleanNo = (trainNumber || '').trim();
+    const cleanKey = (sectionKey || '').trim().toUpperCase();
+    const cleanFrom = (fromStationCode || '').trim().toUpperCase();
+    const cleanTo = (toStationCode || '').trim().toUpperCase();
+
+    const trainMap = this.getOrCreateTrainMap(cleanNo);
+    const existing = trainMap.get(cleanKey) || {
+      sectionKey: cleanKey,
+      fromStationCode: cleanFrom,
+      toStationCode: cleanTo
     };
 
     if (!speedKmph && (!existing.congestion || existing.congestion === 'NORMAL') && !existing.unscheduledStopMinutes && !existing.isTrackBlocked) {
-      trainMap.delete(sectionKey);
+      trainMap.delete(cleanKey);
     } else {
       existing.speedRestrictionKmph = speedKmph;
-      trainMap.set(sectionKey, existing);
+      existing.fromStationCode = cleanFrom;
+      existing.toStationCode = cleanTo;
+      trainMap.set(cleanKey, existing);
     }
 
-    this.notify(trainNumber);
+    this.notify(cleanNo);
   }
 
   /**
@@ -123,21 +140,28 @@ class OperationalScenarioServiceImpl {
     toStationCode: string,
     stopMinutes?: number
   ): void {
-    const trainMap = this.getOrCreateTrainMap(trainNumber);
-    const existing = trainMap.get(sectionKey) || {
-      sectionKey,
-      fromStationCode,
-      toStationCode
+    const cleanNo = (trainNumber || '').trim();
+    const cleanKey = (sectionKey || '').trim().toUpperCase();
+    const cleanFrom = (fromStationCode || '').trim().toUpperCase();
+    const cleanTo = (toStationCode || '').trim().toUpperCase();
+
+    const trainMap = this.getOrCreateTrainMap(cleanNo);
+    const existing = trainMap.get(cleanKey) || {
+      sectionKey: cleanKey,
+      fromStationCode: cleanFrom,
+      toStationCode: cleanTo
     };
 
     if (!stopMinutes && (!existing.congestion || existing.congestion === 'NORMAL') && !existing.speedRestrictionKmph && !existing.isTrackBlocked) {
-      trainMap.delete(sectionKey);
+      trainMap.delete(cleanKey);
     } else {
       existing.unscheduledStopMinutes = stopMinutes;
-      trainMap.set(sectionKey, existing);
+      existing.fromStationCode = cleanFrom;
+      existing.toStationCode = cleanTo;
+      trainMap.set(cleanKey, existing);
     }
 
-    this.notify(trainNumber);
+    this.notify(cleanNo);
   }
 
   /**
@@ -151,31 +175,39 @@ class OperationalScenarioServiceImpl {
     isBlocked: boolean,
     blockDelayMinutes: number = 20
   ): void {
-    const trainMap = this.getOrCreateTrainMap(trainNumber);
-    const existing = trainMap.get(sectionKey) || {
-      sectionKey,
-      fromStationCode,
-      toStationCode
+    const cleanNo = (trainNumber || '').trim();
+    const cleanKey = (sectionKey || '').trim().toUpperCase();
+    const cleanFrom = (fromStationCode || '').trim().toUpperCase();
+    const cleanTo = (toStationCode || '').trim().toUpperCase();
+
+    const trainMap = this.getOrCreateTrainMap(cleanNo);
+    const existing = trainMap.get(cleanKey) || {
+      sectionKey: cleanKey,
+      fromStationCode: cleanFrom,
+      toStationCode: cleanTo
     };
 
     if (!isBlocked && (!existing.congestion || existing.congestion === 'NORMAL') && !existing.speedRestrictionKmph && !existing.unscheduledStopMinutes) {
-      trainMap.delete(sectionKey);
+      trainMap.delete(cleanKey);
     } else {
       existing.isTrackBlocked = isBlocked;
       existing.blockDelayMinutes = isBlocked ? blockDelayMinutes : undefined;
-      trainMap.set(sectionKey, existing);
+      existing.fromStationCode = cleanFrom;
+      existing.toStationCode = cleanTo;
+      trainMap.set(cleanKey, existing);
     }
 
-    this.notify(trainNumber);
+    this.notify(cleanNo);
   }
 
   /**
    * Reset all scenarios for a specific train
    */
   public resetScenario(trainNumber: string): void {
-    if (this.scenarios.has(trainNumber)) {
-      this.scenarios.delete(trainNumber);
-      this.notify(trainNumber);
+    const cleanNo = (trainNumber || '').trim();
+    if (this.scenarios.has(cleanNo)) {
+      this.scenarios.delete(cleanNo);
+      this.notify(cleanNo);
     }
   }
 
@@ -192,7 +224,8 @@ class OperationalScenarioServiceImpl {
    * Check if any active scenarios exist for a train
    */
   public hasActiveScenario(trainNumber: string): boolean {
-    const trainMap = this.scenarios.get(trainNumber);
+    const cleanNo = (trainNumber || '').trim();
+    const trainMap = this.scenarios.get(cleanNo);
     if (!trainMap) return false;
     return trainMap.size > 0;
   }
@@ -201,7 +234,8 @@ class OperationalScenarioServiceImpl {
    * Get total count of active scenario conditions for a train
    */
   public getActiveConditionCount(trainNumber: string): number {
-    const trainMap = this.scenarios.get(trainNumber);
+    const cleanNo = (trainNumber || '').trim();
+    const trainMap = this.scenarios.get(cleanNo);
     if (!trainMap) return 0;
     let count = 0;
     trainMap.forEach((override) => {
@@ -213,11 +247,33 @@ class OperationalScenarioServiceImpl {
     return count;
   }
 
+  /**
+   * Get all active overrides across all trains in the fleet
+   */
+  public getAllActiveOverrides(): Array<{ trainNumber: string; overrides: SectionScenarioOverride[] }> {
+    const results: Array<{ trainNumber: string; overrides: SectionScenarioOverride[] }> = [];
+    this.scenarios.forEach((trainMap, trainNo) => {
+      const activeOverrides = Array.from(trainMap.values()).filter((ov) => {
+        return (
+          (ov.congestion && ov.congestion !== 'NORMAL') ||
+          (ov.speedRestrictionKmph && ov.speedRestrictionKmph > 0) ||
+          (ov.unscheduledStopMinutes && ov.unscheduledStopMinutes > 0) ||
+          ov.isTrackBlocked
+        );
+      });
+      if (activeOverrides.length > 0) {
+        results.push({ trainNumber: trainNo, overrides: activeOverrides });
+      }
+    });
+    return results;
+  }
+
   private getOrCreateTrainMap(trainNumber: string): Map<string, SectionScenarioOverride> {
-    let trainMap = this.scenarios.get(trainNumber);
+    const cleanNo = (trainNumber || '').trim();
+    let trainMap = this.scenarios.get(cleanNo);
     if (!trainMap) {
       trainMap = new Map();
-      this.scenarios.set(trainNumber, trainMap);
+      this.scenarios.set(cleanNo, trainMap);
     }
     return trainMap;
   }

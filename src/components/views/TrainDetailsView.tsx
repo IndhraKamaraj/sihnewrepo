@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ArrowLeft,
   Train as TrainIcon,
@@ -24,6 +24,8 @@ import { ReplayControlBar } from '../common/ReplayControlBar';
 import { DynamicETAEngine } from '../../services/DynamicETAEngine';
 import { DynamicETAForecastCard } from '../common/DynamicETAForecastCard';
 import { OperationalStressTestingCard } from '../features/OperationalStressTestingCard';
+import { railwayDataService } from '../../services/RailwayDataService';
+import { operationalScenarioService } from '../../services/OperationalScenarioService';
 import { Sliders } from 'lucide-react';
 
 interface TrainDetailsViewProps {
@@ -35,18 +37,41 @@ interface TrainDetailsViewProps {
 }
 
 export const TrainDetailsView: React.FC<TrainDetailsViewProps> = ({
-  train,
+  train: initialTrain,
   onBack,
   onSelectStation,
   availableTrains = [],
   onSelectTrain
 }) => {
   const [activeTab, setActiveTab] = useState<'eta' | 'stress' | 'route' | 'composition'>('eta');
+  const [tick, setTick] = useState(0);
+
+  // Subscribe to centralized RailwayDataService and OperationalScenarioService changes
+  useEffect(() => {
+    const unsubRailway = railwayDataService.subscribe(() => {
+      setTick((t) => t + 1);
+    });
+    const unsubScenario = operationalScenarioService.subscribe((updatedTrainNo) => {
+      if (!initialTrain || updatedTrainNo === initialTrain.trainNumber.trim()) {
+        setTick((t) => t + 1);
+      }
+    });
+    return () => {
+      unsubRailway();
+      unsubScenario();
+    };
+  }, [initialTrain?.trainNumber]);
+
+  // Keep live train synchronized with Centralized RailwayDataService store
+  const train = useMemo(() => {
+    if (!initialTrain) return null;
+    return railwayDataService.getTrainByNumberSync(initialTrain.trainNumber) || initialTrain;
+  }, [initialTrain, tick]);
 
   const etaPrediction = useMemo(() => {
     if (!train) return null;
     return DynamicETAEngine.predict(train);
-  }, [train]);
+  }, [train, tick]);
 
   if (!train) {
     return (
@@ -373,14 +398,24 @@ export const TrainDetailsView: React.FC<TrainDetailsViewProps> = ({
       {activeTab === 'eta' && etaPrediction && (
         <div className="space-y-6">
           <DynamicETAForecastCard prediction={etaPrediction} train={train} />
-          <OperationalStressTestingCard train={train} currentPrediction={etaPrediction} />
+          <OperationalStressTestingCard
+            key={train.trainNumber}
+            train={train}
+            currentPrediction={etaPrediction}
+            onScenarioChange={() => setTick((t) => t + 1)}
+          />
         </div>
       )}
 
       {/* Tab 2: Operational Stress Testing Focused Tab */}
       {activeTab === 'stress' && etaPrediction && (
         <div className="space-y-6">
-          <OperationalStressTestingCard train={train} currentPrediction={etaPrediction} />
+          <OperationalStressTestingCard
+            key={train.trainNumber}
+            train={train}
+            currentPrediction={etaPrediction}
+            onScenarioChange={() => setTick((t) => t + 1)}
+          />
           <DynamicETAForecastCard prediction={etaPrediction} train={train} />
         </div>
       )}

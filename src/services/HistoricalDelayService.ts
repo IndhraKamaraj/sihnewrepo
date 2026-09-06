@@ -306,17 +306,8 @@ export class HistoricalDelayService {
       ? this.calculateSectionStats(cleanNo, currentSection.fromStationCode, currentSection.toStationCode)
       : undefined;
 
-    // Corridor Name
-    const corridorName =
-      cleanNo === '12004'
-        ? 'NDLS → LJN Shatabdi Corridor'
-        : cleanNo === '22436'
-        ? 'NDLS → BSB Vande Bharat Corridor'
-        : cleanNo === '12951'
-        ? 'MMCT → NDLS Rajdhani Corridor'
-        : cleanNo === '12301'
-        ? 'HWH → NDLS Rajdhani Corridor'
-        : `${train.trainName} Corridor`;
+    // Corridor Name (dynamic for all trains)
+    const corridorName = `${train.sourceStationCode} → ${train.destinationStationCode} (${train.trainName}) Corridor`;
 
     if (currentStats && currentStats.sampleCount > 0) {
       const isCurrentSectionAvailable = true;

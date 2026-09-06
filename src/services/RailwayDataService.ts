@@ -204,8 +204,13 @@ class PrototypeRailwayDataService implements IRailwayDataService {
    */
   public syncOperationalHoldState(trainNumber: string): void {
     const cleanNo = trainNumber.trim();
-    const train = this.trains.find((t) => t.trainNumber === cleanNo);
-    if (!train) return;
+    const targetIdx = this.trains.findIndex((t) => t.trainNumber === cleanNo);
+    if (targetIdx === -1) return;
+    const train = {
+      ...this.trains[targetIdx],
+      position: { ...this.trains[targetIdx].position },
+      route: this.trains[targetIdx].route.map((r) => ({ ...r }))
+    };
 
     const activeBlock = this.getActiveTrackBlock(cleanNo);
     const waypoints = this.getWaypointsForTrain(cleanNo);
@@ -227,6 +232,8 @@ class PrototypeRailwayDataService implements IRailwayDataService {
           train.position.operationalHoldReason = `Train held due to active track block on ${fromStop.stationCode} → ${toStop.stationCode}.`;
           train.position.currentLocationDescription = `Held at ${train.position.currentStationCode || fromStop.stationName} (${fromStop.stationCode}) due to active track block on ${fromStop.stationCode} → ${toStop.stationCode}.`;
 
+          this.trains[targetIdx] = train;
+
           if (state && state.isPlaying) {
             this.pauseReplay(cleanNo);
           }
@@ -241,6 +248,7 @@ class PrototypeRailwayDataService implements IRailwayDataService {
             train.position.signalAspect = currentWp.signalAspect;
             train.position.currentLocationDescription = currentWp.locationDescription;
           }
+          this.trains[targetIdx] = train;
           return;
         }
       }
@@ -255,6 +263,7 @@ class PrototypeRailwayDataService implements IRailwayDataService {
       train.position.signalAspect = currentWp.signalAspect;
       train.position.currentLocationDescription = currentWp.locationDescription;
     }
+    this.trains[targetIdx] = train;
   }
 
   /**
@@ -271,25 +280,33 @@ class PrototypeRailwayDataService implements IRailwayDataService {
    */
   public recalculateTrainPrediction(trainNumber: string): void {
     const cleanNo = trainNumber.trim();
-    const train = this.trains.find((t) => t.trainNumber === cleanNo);
-    if (!train) return;
+    const targetIdx = this.trains.findIndex((t) => t.trainNumber === cleanNo);
+    if (targetIdx === -1) return;
+    const train = this.trains[targetIdx];
+
     try {
       const pred = DynamicETAEngine.predict(train);
-      train.futurePredictionContract = {
-        predictedArrival: pred.dynamicDestinationETA,
-        predictedDelayMinutes: pred.predictedDelayMinutes,
-        delayCauseCategory: pred.etaTrendLabel,
-        sectionCongestionLevel:
-          pred.etaStatus === 'SIGNIFICANT_DELAY'
-            ? 'SEVERE'
-            : pred.etaStatus === 'MINOR_DELAY'
-            ? 'MODERATE'
-            : 'LOW',
-        historicalSectionSpeedAvgKmph: Math.round(
-          pred.sections.reduce((acc, s) => acc + s.effectiveSpeedKmph, 0) /
-            Math.max(1, pred.sections.length)
-        )
+      const updatedTrain: Train = {
+        ...train,
+        position: { ...train.position },
+        route: train.route.map((r) => ({ ...r })),
+        futurePredictionContract: {
+          predictedArrival: pred.dynamicDestinationETA,
+          predictedDelayMinutes: pred.predictedDelayMinutes,
+          delayCauseCategory: pred.etaTrendLabel,
+          sectionCongestionLevel:
+            pred.etaStatus === 'SIGNIFICANT_DELAY'
+              ? 'SEVERE'
+              : pred.etaStatus === 'MINOR_DELAY'
+              ? 'MODERATE'
+              : 'LOW',
+          historicalSectionSpeedAvgKmph: Math.round(
+            pred.sections.reduce((acc, s) => acc + s.effectiveSpeedKmph, 0) /
+              Math.max(1, pred.sections.length)
+          )
+        }
       };
+      this.trains[targetIdx] = updatedTrain;
     } catch (err) {
       console.error('Dynamic ETA recalculation error for train:', train.trainNumber, err);
     }
@@ -605,6 +622,18 @@ class PrototypeRailwayDataService implements IRailwayDataService {
       };
     } catch (err) {
       console.error('Dynamic ETA recalculation error for train:', train.trainNumber, err);
+    }
+
+    const targetIdx = this.trains.findIndex((t) => t.trainNumber === cleanNo);
+    if (targetIdx !== -1) {
+      this.trains[targetIdx] = {
+        ...train,
+        position: { ...train.position },
+        route: train.route.map((r) => ({ ...r })),
+        futurePredictionContract: train.futurePredictionContract
+          ? { ...train.futurePredictionContract }
+          : undefined
+      };
     }
 
     this.notifyListeners();
@@ -952,7 +981,16 @@ class PrototypeRailwayDataService implements IRailwayDataService {
   public getTrainByNumberSync(trainNumber: string): Train | null {
     const cleanNo = trainNumber.trim();
     const train = this.trains.find((t) => t.trainNumber === cleanNo);
-    return train ? { ...train } : null;
+    return train
+      ? {
+          ...train,
+          position: { ...train.position },
+          route: train.route.map((r) => ({ ...r })),
+          futurePredictionContract: train.futurePredictionContract
+            ? { ...train.futurePredictionContract }
+            : undefined
+        }
+      : null;
   }
 
   public async getNetworkStatus(): Promise<NetworkStatus> {

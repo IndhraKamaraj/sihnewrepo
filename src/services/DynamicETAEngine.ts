@@ -46,11 +46,14 @@ export class DynamicETAEngine {
     const mps = TrainStateService.getMaxPermissibleSpeedKmph(train);
 
     // Query active operational scenario conditions for this train
-    const scenarioOverrides = operationalScenarioService.getScenarioForTrain(train.trainNumber);
+    const cleanNo = train.trainNumber.trim();
+    const scenarioOverrides = operationalScenarioService.getScenarioForTrain(cleanNo);
     const overrideMap = new Map<string, typeof scenarioOverrides[0]>();
     scenarioOverrides.forEach((ov) => {
-      overrideMap.set(ov.sectionKey, ov);
-      overrideMap.set(ov.toStationCode, ov);
+      const normSection = ov.sectionKey.trim().toUpperCase();
+      const normTo = ov.toStationCode.trim().toUpperCase();
+      overrideMap.set(normSection, ov);
+      overrideMap.set(normTo, ov);
     });
 
     // 2. Compute Baseline Destination ETA (Schedule + Current Delay Baseline)
@@ -129,8 +132,10 @@ export class DynamicETAEngine {
         const incomingSection = sections.find((s) => s.toStationCode === stop.stationCode);
 
         if (incomingSection) {
-          const sectionKey = `${incomingSection.fromStationCode}-${incomingSection.toStationCode}`;
-          const override = overrideMap.get(sectionKey) || overrideMap.get(stop.stationCode);
+          const fromCode = incomingSection.fromStationCode.trim().toUpperCase();
+          const toCode = incomingSection.toStationCode.trim().toUpperCase();
+          const sectionKey = `${fromCode}-${toCode}`;
+          const override = overrideMap.get(sectionKey) || overrideMap.get(toCode);
 
           // Determine initial physical speed
           let baseSpeed = incomingSection.isCurrentActiveSection
@@ -149,12 +154,24 @@ export class DynamicETAEngine {
             ? Math.max(0, stop.distanceFromSourceKm - currentDist)
             : incomingSection.distanceKm;
 
-          // Normal physical travel time before scenario injection
-          const normalTravelTimeMinutes = effectiveSpeed > 0
-            ? (remainingSectionDistanceKm / effectiveSpeed) * 60
+          // Fraction of scheduled timetable time remaining for this section
+          const scheduledFractionRemaining = incomingSection.isCurrentActiveSection && incomingSection.distanceKm > 0
+            ? Math.max(1, Math.round((remainingSectionDistanceKm / incomingSection.distanceKm) * incomingSection.scheduledTravelMinutes))
             : incomingSection.scheduledTravelMinutes;
 
-          let scenarioTraverseMinutes = normalTravelTimeMinutes;
+          // If currently running at crawl speed on active section without an explicit override
+          let crawlPenalty = 0;
+          if (incomingSection.isCurrentActiveSection && currentSpeed > 0 && currentSpeed < 45) {
+            const crawlTime = Math.round((remainingSectionDistanceKm / currentSpeed) * 60);
+            if (crawlTime > scheduledFractionRemaining) {
+              crawlPenalty = crawlTime - scheduledFractionRemaining;
+            }
+          }
+
+          let congestionPenalty = 0;
+          let restrictionPenalty = 0;
+          let unscheduledStopPenalty = 0;
+          let trackBlockPenalty = 0;
 
           // =================================================================
           // A. SECTION CONGESTION SCENARIO
@@ -165,11 +182,8 @@ export class DynamicETAEngine {
             else if (override.congestion === 'HEAVY') mult = 1.65;
             else if (override.congestion === 'SEVERE') mult = 2.25;
 
-            const preCongestionTime = scenarioTraverseMinutes;
-            scenarioTraverseMinutes = scenarioTraverseMinutes * mult;
+            congestionPenalty = Math.max(2, Math.round(scheduledFractionRemaining * (mult - 1)));
             effectiveSpeed = Math.max(12, Math.round(effectiveSpeed / mult));
-
-            const congestionPenalty = Math.round(scenarioTraverseMinutes - preCongestionTime);
             totalCongestionImpact += congestionPenalty;
 
             activeFactors.push({
@@ -187,14 +201,13 @@ export class DynamicETAEngine {
           // B. SPEED RESTRICTION SCENARIO
           // =================================================================
           if (override?.speedRestrictionKmph && override.speedRestrictionKmph > 0) {
-            if (effectiveSpeed > override.speedRestrictionKmph) {
-              const preRestrictionTime = scenarioTraverseMinutes;
+            const normalSecSpeed = Math.min(mps, Math.max(incomingSection.scheduledAverageSpeedKmph, 90));
+            if (normalSecSpeed > override.speedRestrictionKmph) {
+              const normalPhysicalTime = (remainingSectionDistanceKm / normalSecSpeed) * 60;
               effectiveSpeed = override.speedRestrictionKmph;
-              // Recompute physical transit time from distance and capped speed
-              const restrictedTime = (remainingSectionDistanceKm / effectiveSpeed) * 60;
-              const restrictionPenalty = Math.round(Math.max(0, restrictedTime - preRestrictionTime));
+              const restrictedPhysicalTime = (remainingSectionDistanceKm / effectiveSpeed) * 60;
+              restrictionPenalty = Math.max(2, Math.round(restrictedPhysicalTime - normalPhysicalTime));
 
-              scenarioTraverseMinutes += restrictionPenalty;
               totalSpeedRestrictionImpact += restrictionPenalty;
 
               activeFactors.push({
@@ -213,15 +226,15 @@ export class DynamicETAEngine {
           // C. UNSCHEDULED STOP SCENARIO
           // =================================================================
           if (override?.unscheduledStopMinutes && override.unscheduledStopMinutes > 0) {
-            scenarioTraverseMinutes += override.unscheduledStopMinutes;
-            totalUnscheduledStopImpact += override.unscheduledStopMinutes;
+            unscheduledStopPenalty = override.unscheduledStopMinutes;
+            totalUnscheduledStopImpact += unscheduledStopPenalty;
 
             activeFactors.push({
               conditionType: 'UNSCHEDULED_STOP',
               sectionKey,
               sectionLabel: `${incomingSection.fromStationCode} → ${incomingSection.toStationCode}`,
               detail: `Unscheduled stoppage of ${override.unscheduledStopMinutes} min at block/station`,
-              travelTimeImpactMinutes: override.unscheduledStopMinutes
+              travelTimeImpactMinutes: unscheduledStopPenalty
             });
 
             incomingSection.unscheduledStopMinutes = override.unscheduledStopMinutes;
@@ -231,16 +244,15 @@ export class DynamicETAEngine {
           // D. TRACK / LINE BLOCK SCENARIO
           // =================================================================
           if (override?.isTrackBlocked) {
-            const blockPenalty = override.blockDelayMinutes || 20;
-            scenarioTraverseMinutes += blockPenalty;
-            totalTrackBlockImpact += blockPenalty;
+            trackBlockPenalty = override.blockDelayMinutes || 20;
+            totalTrackBlockImpact += trackBlockPenalty;
 
             activeFactors.push({
               conditionType: 'TRACK_BLOCK',
               sectionKey,
               sectionLabel: `${incomingSection.fromStationCode} → ${incomingSection.toStationCode}`,
-              detail: `Line maintenance block active; single-line crossing hold (+${blockPenalty} min)`,
-              travelTimeImpactMinutes: blockPenalty
+              detail: `Line maintenance block active; single-line crossing hold (+${trackBlockPenalty} min)`,
+              travelTimeImpactMinutes: trackBlockPenalty
             });
 
             incomingSection.isTrackBlocked = true;
@@ -256,9 +268,7 @@ export class DynamicETAEngine {
           ) {
             const histProfile = historicalContext.sectionStatsMap[sectionKey];
             if (histProfile && histProfile.medianDelayMinutes >= 3 && cumulativePropagatedDelay < 12) {
-              // Subtle conservative adjustment derived from simulation runs
-              historicalAdjustment = Math.min(1.5, Math.round(histProfile.medianDelayMinutes * 0.25));
-              scenarioTraverseMinutes += historicalAdjustment;
+              historicalAdjustment = Math.min(2, Math.round(histProfile.medianDelayMinutes * 0.25));
             }
           }
 
@@ -268,6 +278,7 @@ export class DynamicETAEngine {
             !override?.congestion &&
             !override?.speedRestrictionKmph &&
             !override?.isTrackBlocked &&
+            !override?.unscheduledStopMinutes &&
             cumulativePropagatedDelay > 5 &&
             currentSpeed >= 95 &&
             train.position.signalAspect === 'GREEN'
@@ -275,14 +286,25 @@ export class DynamicETAEngine {
             slackRecovery = -Math.min(3, Math.round(incomingSection.scheduledTravelMinutes * 0.05));
           }
 
-          const scheduledFractionRemaining = incomingSection.isCurrentActiveSection && incomingSection.distanceKm > 0
-            ? (remainingSectionDistanceKm / incomingSection.distanceKm) * incomingSection.scheduledTravelMinutes
-            : incomingSection.scheduledTravelMinutes;
+          const sectionDisturbances =
+            congestionPenalty +
+            restrictionPenalty +
+            unscheduledStopPenalty +
+            trackBlockPenalty;
 
-          const sectionOperationalDiff = Math.round((scenarioTraverseMinutes - scheduledFractionRemaining) + slackRecovery);
+          const sectionOperationalDiff =
+            sectionDisturbances +
+            crawlPenalty +
+            historicalAdjustment +
+            slackRecovery;
+
+          const scenarioTraverseMinutes = Math.max(
+            1,
+            scheduledFractionRemaining + sectionOperationalDiff
+          );
 
           incomingSection.effectiveSpeedKmph = Math.round(effectiveSpeed);
-          incomingSection.estimatedTravelMinutes = Math.max(2, Math.round(scenarioTraverseMinutes));
+          incomingSection.estimatedTravelMinutes = Math.round(scenarioTraverseMinutes);
           incomingSection.operationalAdjustmentMinutes = sectionOperationalDiff;
 
           // Propagate delay downstream
@@ -394,15 +416,17 @@ export class DynamicETAEngine {
     let operationalHoldExplanation: string | undefined = undefined;
 
     if (activeBlockOverride) {
-      const fromStop = stops.find((s) => s.stationCode === activeBlockOverride.fromStationCode);
-      const toStop = stops.find((s) => s.stationCode === activeBlockOverride.toStationCode);
+      const fromStn = activeBlockOverride.fromStationCode.trim().toUpperCase();
+      const toStn = activeBlockOverride.toStationCode.trim().toUpperCase();
+      const fromStop = stops.find((s) => s.stationCode.trim().toUpperCase() === fromStn);
+      const toStop = stops.find((s) => s.stationCode.trim().toUpperCase() === toStn);
       if (fromStop && toStop) {
         if (currentDist >= fromStop.distanceFromSourceKm && currentDist < toStop.distanceFromSourceKm) {
           operationalHoldState = 'HOLD';
-          operationalHoldExplanation = `Train held due to active track block on ${activeBlockOverride.fromStationCode} → ${activeBlockOverride.toStationCode}.`;
+          operationalHoldExplanation = `Train held due to active track block on ${fromStn} → ${toStn}.`;
         } else if (currentDist < fromStop.distanceFromSourceKm) {
           operationalHoldState = 'BLOCKED';
-          operationalHoldExplanation = `Track block active on upcoming section ${activeBlockOverride.fromStationCode} → ${activeBlockOverride.toStationCode} (+${activeBlockOverride.blockDelayMinutes || 20}m hold). Train will hold upon arrival.`;
+          operationalHoldExplanation = `Track block active on upcoming section ${fromStn} → ${toStn} (+${activeBlockOverride.blockDelayMinutes || 20}m hold). Train will hold upon arrival.`;
         } else {
           operationalHoldState = 'NORMAL';
         }
