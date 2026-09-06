@@ -1,0 +1,8 @@
+{
+  "name": "Remix Railway Dynamic ETA Intelligence",
+  "description": "Railway operations intelligence platform and dynamic ETA tracking system for approaching trains (SIH Problem Statement 26028).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
